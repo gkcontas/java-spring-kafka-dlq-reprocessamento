@@ -1,0 +1,12 @@
+app:
+  orders:
+    # Backoff cut to milliseconds: the tests are about the retry *policy*, not about
+    # waiting for it. The production values would add seconds to every failing scenario.
+    retry-initial-interval: PT0.05S
+    max-reprocess-attempts: 2
+spring:
+  kafka:
+    consumer:
+      # A fixed group id per test run keeps the listener from resuming offsets left by a
+      # previous run against the same broker.
+      group-id: orders-processor-test
