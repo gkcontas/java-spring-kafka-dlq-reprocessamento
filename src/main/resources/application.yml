@@ -1,0 +1,70 @@
+spring:
+  application:
+    name: orders-dlq
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/orders
+    username: orders
+    password: orders
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+
+  flyway:
+    enabled: true
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: orders-processor
+      auto-offset-reset: earliest
+      # false, always. With auto-commit the broker can record an offset for a record the
+      # listener has not finished with, and a crash then loses it silently — the failure
+      # mode the whole dead letter machinery exists to prevent.
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # ErrorHandlingDeserializer wraps the real one. Deserialization happens BEFORE the
+      # listener is called, so a malformed payload would otherwise never reach any error
+      # handler: the container would fail to convert it and loop on the same offset
+      # forever, blocking the partition.
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: com.gkcontas.orders.event
+        spring.json.value.default.type: com.gkcontas.orders.event.OrderPlacedEvent
+    listener:
+      # The listener acknowledges each record explicitly once the work is done. Combined
+      # with enable-auto-commit: false, no offset moves on a record that was not handled.
+      ack-mode: MANUAL_IMMEDIATE
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      properties:
+        # Without idempotence a producer retry can write the same record twice, which
+        # undoes the deduplication work happening on the consumer side.
+        enable.idempotence: true
+
+app:
+  orders:
+    topic: orders
+    # The convention DeadLetterPublishingRecoverer uses by default: original topic + .DLT
+    dead-letter-topic: orders.DLT
+    partitions: 3
+    # 3 attempts in total: the first plus two retries.
+    max-retries: 2
+    retry-initial-interval: PT0.2S
+    retry-multiplier: 2.0
+    # How many times one record may be pushed back through the main topic before it is
+    # considered unrecoverable. Without a ceiling a permanently broken record circles
+    # between the topic and the DLQ forever.
+    max-reprocess-attempts: 3
+    max-quantity: 100
+
+logging:
+  level:
+    com.gkcontas.orders: INFO
+    org.apache.kafka: WARN
+    org.springframework.kafka: INFO
